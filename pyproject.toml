@@ -18,6 +18,9 @@ dependencies = [
 dev = [
     "pytest>=7.0",
 ]
+aws = [
+    "boto3>=1.28",
+]
 
 [project.scripts]
 iam-mapper = "iam_mapper.cli:main"

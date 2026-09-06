@@ -52,7 +52,7 @@ instead of requiring a human to notice the chain.
 ## How it works
 
 ```
-account JSON (or, later, live AWS via boto3)
+account JSON, or a live AWS account via aws_collector.py (boto3)
         |
         v
   models.py            <- typed Users / Roles / Groups / Policies
@@ -114,6 +114,9 @@ pip install -e .          # installs the `iam-mapper` command
 # or, without installing:
 pip install -r requirements.txt
 python -m iam_mapper.cli --help
+
+# To pull live data from a real AWS account, also install the `aws` extra:
+pip install -e ".[aws]"
 ```
 
 ## Usage
@@ -134,7 +137,30 @@ iam-mapper analyze -i data/sample_org.json --output-graph graph.json
 
 # CI use -- exit non-zero if anything Critical/High is found:
 iam-mapper analyze -i data/sample_org.json --fail-on High
+
+# Pull live IAM state from a real AWS account (read-only; requires the
+# `aws` extra and credentials via the normal boto3 chain -- profile, env
+# vars, or an instance/task role) into the same JSON schema, then analyze it:
+iam-mapper collect --profile my-aws-profile -o live_org.json
+iam-mapper analyze -i live_org.json --fail-on High
 ```
+
+### Collecting from a live account
+
+`iam-mapper collect` only ever calls read-only `iam:List*`/`iam:Get*`
+APIs (plus one `sts:GetCallerIdentity` to default the account id) — it
+cannot modify the account it's pointed at. It walks users, roles, and
+groups and fetches each *referenced* customer-managed/AWS-managed policy
+exactly once (never `iam:ListPolicies`, which would enumerate the
+~1,000+ AWS-managed policies regardless of whether they're in use).
+
+```bash
+iam-mapper collect --profile my-aws-profile --region us-east-1 -o live_org.json
+```
+
+`--account-id` overrides the account id if your credentials belong to a
+different account than the one being audited; `--profile`/`--region`
+are passed straight through to `boto3.Session`.
 
 ### The account JSON format
 
@@ -165,9 +191,12 @@ without needing real AWS credentials:
 This is a v1 focused on getting the graph model and the core escalation
 techniques right, not on covering every corner of IAM evaluation:
 
-- **No live AWS integration yet** — input is a JSON snapshot; a `boto3`
-  backend to populate the same `Organization` model from a real account
-  is the next major piece (see Roadmap).
+- **Live AWS collection is single-account only** — `iam-mapper collect`
+  pulls the caller's own account (or one overridden via `--account-id`,
+  if credentials permit); cross-account collection via `sts:AssumeRole`
+  is not yet implemented (see Roadmap).
+- **`Federated` trust-policy principals are stored but not resolved
+  further** — they're not IAM principals this tool can trace deeper.
 - **IAM `Condition` blocks are not evaluated** — a matching statement
   with a condition is treated as "would allow" and flagged
   `conditional`, downgrading severity by one level, rather than
@@ -180,8 +209,10 @@ techniques right, not on covering every corner of IAM evaluation:
 
 ## Roadmap
 
-- [ ] Live AWS backend: pull real IAM data via `boto3` (`iam:Get*`/`List*`)
-      into the same `Organization` model.
+- [x] Live AWS backend: pull real IAM data via `boto3` (`iam:Get*`/`List*`)
+      into the same `Organization` model (`iam-mapper collect`).
+- [ ] Cross-account collection via `sts:AssumeRole`, for auditing an
+      entire AWS Organization from one central role.
 - [ ] Web UI: interactive graph visualization (the exported GraphML/JSON
       is already shaped for this).
 - [ ] Continuous scanning + diffing ("this deploy opened a new

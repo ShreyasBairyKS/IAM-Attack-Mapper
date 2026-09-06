@@ -1,10 +1,13 @@
 """Tests for the ``iam-mapper`` command-line interface."""
 
+import builtins
 import json
 
+import boto3
 import networkx as nx
 import pytest
 from click.testing import CliRunner
+from moto import mock_aws
 
 from iam_mapper.cli import main
 from iam_mapper.models import Organization, User
@@ -126,3 +129,33 @@ def test_analyze_missing_input_file_errors(runner, tmp_path):
     missing = tmp_path / "does_not_exist.json"
     result = runner.invoke(main, ["analyze", "-i", str(missing)])
     assert result.exit_code != 0
+
+
+@mock_aws
+def test_collect_command_writes_org_json(runner, tmp_path):
+    session = boto3.Session(region_name="us-east-1")
+    session.client("iam").create_user(UserName="alice")
+
+    out_path = tmp_path / "live_org.json"
+    result = runner.invoke(main, ["collect", "--region", "us-east-1", "-o", str(out_path)])
+
+    assert result.exit_code == 0
+    assert "Collected live account" in result.output
+    assert out_path.exists()
+    data = json.loads(out_path.read_text())
+    assert any(u["name"] == "alice" for u in data["users"])
+
+
+def test_collect_command_errors_without_boto3(runner, monkeypatch, tmp_path):
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "boto3":
+            raise ImportError("simulated: boto3 not installed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    result = runner.invoke(main, ["collect", "-o", str(tmp_path / "x.json")])
+    assert result.exit_code != 0
+    assert "boto3 is required" in result.output

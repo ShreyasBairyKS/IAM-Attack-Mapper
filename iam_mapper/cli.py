@@ -28,6 +28,28 @@ def generate_sample(output: str):
     click.echo(f"Wrote synthetic account ({len(org.all_principals())} principals) to {output}")
 
 
+@main.command()
+@click.option("--profile", default=None, help="AWS named profile to use (see `aws configure list-profiles`).")
+@click.option("--region", default=None, help="AWS region for the STS/IAM clients (IAM itself is a global service).")
+@click.option("--account-id", default=None, help="Override the account id (default: the caller's own, via STS).")
+@click.option("-o", "--output", default="org.json", show_default=True, help="Where to write the collected account JSON.")
+def collect(profile: str, region: str, account_id: str, output: str):
+    """Pull live IAM state from a real AWS account (read-only; requires the `aws` extra)."""
+    try:
+        import boto3
+    except ImportError as e:
+        raise click.ClickException(
+            "boto3 is required for this command: pip install iam-attack-mapper[aws]"
+        ) from e
+
+    from .aws_collector import collect_organization
+
+    session = boto3.Session(profile_name=profile, region_name=region)
+    org = collect_organization(session, account_id=account_id)
+    save_organization(org, output)
+    click.echo(f"Collected live account ({len(org.all_principals())} principals) to {output}")
+
+
 @main.command(name="analyze")
 @click.option("-i", "--input", "input_path", required=True, help="Path to an account JSON file (see data/sample_org.json for the schema).")
 @click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text", show_default=True)

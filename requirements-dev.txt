@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest>=7.0
+boto3>=1.28
+moto[iam]>=5.0
