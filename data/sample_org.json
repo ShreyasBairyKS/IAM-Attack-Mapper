@@ -1,0 +1,501 @@
+{
+  "account_id": "123456789012",
+  "users": [
+    {
+      "name": "alice",
+      "arn": "arn:aws:iam::123456789012:user/alice",
+      "attached_policies": [
+        "AppDeployPolicy"
+      ],
+      "inline_policies": [
+        {
+          "name": "SelfPolicyManage",
+          "arn": "arn:aws:iam::123456789012:policy/SelfPolicyManage-alice",
+          "statements": [
+            {
+              "effect": "Allow",
+              "actions": [
+                "iam:CreatePolicyVersion",
+                "iam:SetDefaultPolicyVersion"
+              ],
+              "resources": [
+                "arn:aws:iam::123456789012:policy/AppDeployPolicy"
+              ],
+              "not_action": false,
+              "condition": null
+            }
+          ],
+          "aws_managed": false
+        }
+      ],
+      "groups": [],
+      "permissions_boundary": null,
+      "has_console_password": false,
+      "access_keys": 0,
+      "kind": "user"
+    },
+    {
+      "name": "bob",
+      "arn": "arn:aws:iam::123456789012:user/bob",
+      "attached_policies": [],
+      "inline_policies": [
+        {
+          "name": "OpsAccessMgmt",
+          "arn": "arn:aws:iam::123456789012:policy/OpsAccessMgmt-bob",
+          "statements": [
+            {
+              "effect": "Allow",
+              "actions": [
+                "iam:CreateAccessKey"
+              ],
+              "resources": [
+                "*"
+              ],
+              "not_action": false,
+              "condition": null
+            }
+          ],
+          "aws_managed": false
+        }
+      ],
+      "groups": [],
+      "permissions_boundary": null,
+      "has_console_password": false,
+      "access_keys": 0,
+      "kind": "user"
+    },
+    {
+      "name": "carol",
+      "arn": "arn:aws:iam::123456789012:user/carol",
+      "attached_policies": [
+        "AdministratorAccess"
+      ],
+      "inline_policies": [],
+      "groups": [],
+      "permissions_boundary": null,
+      "has_console_password": false,
+      "access_keys": 0,
+      "kind": "user"
+    },
+    {
+      "name": "dave",
+      "arn": "arn:aws:iam::123456789012:user/dave",
+      "attached_policies": [],
+      "inline_policies": [
+        {
+          "name": "PipelineOps",
+          "arn": "arn:aws:iam::123456789012:policy/PipelineOps-dave",
+          "statements": [
+            {
+              "effect": "Allow",
+              "actions": [
+                "iam:PassRole"
+              ],
+              "resources": [
+                "arn:aws:iam::123456789012:role/data-pipeline-role"
+              ],
+              "not_action": false,
+              "condition": null
+            },
+            {
+              "effect": "Allow",
+              "actions": [
+                "lambda:CreateFunction",
+                "lambda:InvokeFunction",
+                "lambda:CreateEventSourceMapping"
+              ],
+              "resources": [
+                "*"
+              ],
+              "not_action": false,
+              "condition": null
+            }
+          ],
+          "aws_managed": false
+        }
+      ],
+      "groups": [
+        "developers"
+      ],
+      "permissions_boundary": null,
+      "has_console_password": false,
+      "access_keys": 0,
+      "kind": "user"
+    },
+    {
+      "name": "erin",
+      "arn": "arn:aws:iam::123456789012:user/erin",
+      "attached_policies": [],
+      "inline_policies": [
+        {
+          "name": "CIOps",
+          "arn": "arn:aws:iam::123456789012:policy/CIOps-erin",
+          "statements": [
+            {
+              "effect": "Allow",
+              "actions": [
+                "iam:PassRole"
+              ],
+              "resources": [
+                "arn:aws:iam::123456789012:role/ci-role"
+              ],
+              "not_action": false,
+              "condition": null
+            },
+            {
+              "effect": "Allow",
+              "actions": [
+                "ec2:RunInstances"
+              ],
+              "resources": [
+                "*"
+              ],
+              "not_action": false,
+              "condition": null
+            }
+          ],
+          "aws_managed": false
+        }
+      ],
+      "groups": [],
+      "permissions_boundary": null,
+      "has_console_password": false,
+      "access_keys": 0,
+      "kind": "user"
+    },
+    {
+      "name": "frank",
+      "arn": "arn:aws:iam::123456789012:user/frank",
+      "attached_policies": [],
+      "inline_policies": [
+        {
+          "name": "AuditOps",
+          "arn": "arn:aws:iam::123456789012:policy/AuditOps-frank",
+          "statements": [
+            {
+              "effect": "Allow",
+              "actions": [
+                "iam:UpdateAssumeRolePolicy"
+              ],
+              "resources": [
+                "arn:aws:iam::123456789012:role/audit-role"
+              ],
+              "not_action": false,
+              "condition": null
+            }
+          ],
+          "aws_managed": false
+        }
+      ],
+      "groups": [],
+      "permissions_boundary": null,
+      "has_console_password": false,
+      "access_keys": 0,
+      "kind": "user"
+    },
+    {
+      "name": "grace",
+      "arn": "arn:aws:iam::123456789012:user/grace",
+      "attached_policies": [],
+      "inline_policies": [],
+      "groups": [
+        "developers"
+      ],
+      "permissions_boundary": null,
+      "has_console_password": false,
+      "access_keys": 0,
+      "kind": "user"
+    },
+    {
+      "name": "heather",
+      "arn": "arn:aws:iam::123456789012:user/heather",
+      "attached_policies": [],
+      "inline_policies": [],
+      "groups": [
+        "admins"
+      ],
+      "permissions_boundary": null,
+      "has_console_password": false,
+      "access_keys": 0,
+      "kind": "user"
+    }
+  ],
+  "roles": [
+    {
+      "name": "data-pipeline-role",
+      "arn": "arn:aws:iam::123456789012:role/data-pipeline-role",
+      "trust_statements": [
+        {
+          "effect": "Allow",
+          "principals": [
+            "lambda.amazonaws.com"
+          ],
+          "actions": [
+            "sts:AssumeRole"
+          ],
+          "condition": null
+        }
+      ],
+      "attached_policies": [
+        "AdministratorAccess"
+      ],
+      "inline_policies": [],
+      "permissions_boundary": null,
+      "kind": "role"
+    },
+    {
+      "name": "ci-role",
+      "arn": "arn:aws:iam::123456789012:role/ci-role",
+      "trust_statements": [
+        {
+          "effect": "Allow",
+          "principals": [
+            "ec2.amazonaws.com"
+          ],
+          "actions": [
+            "sts:AssumeRole"
+          ],
+          "condition": null
+        }
+      ],
+      "attached_policies": [
+        "AutomationFullIAM"
+      ],
+      "inline_policies": [],
+      "permissions_boundary": null,
+      "kind": "role"
+    },
+    {
+      "name": "audit-role",
+      "arn": "arn:aws:iam::123456789012:role/audit-role",
+      "trust_statements": [
+        {
+          "effect": "Allow",
+          "principals": [
+            "arn:aws:iam::123456789012:role/ci-cd-service"
+          ],
+          "actions": [
+            "sts:AssumeRole"
+          ],
+          "condition": null
+        }
+      ],
+      "attached_policies": [
+        "SecurityAuditRO"
+      ],
+      "inline_policies": [
+        {
+          "name": "AuditRoleSelfManage",
+          "arn": "arn:aws:iam::123456789012:policy/AuditRoleSelfManage",
+          "statements": [
+            {
+              "effect": "Allow",
+              "actions": [
+                "iam:AttachRolePolicy"
+              ],
+              "resources": [
+                "arn:aws:iam::123456789012:role/audit-role"
+              ],
+              "not_action": false,
+              "condition": null
+            }
+          ],
+          "aws_managed": false
+        }
+      ],
+      "permissions_boundary": null,
+      "kind": "role"
+    },
+    {
+      "name": "ci-cd-service",
+      "arn": "arn:aws:iam::123456789012:role/ci-cd-service",
+      "trust_statements": [
+        {
+          "effect": "Allow",
+          "principals": [
+            "codebuild.amazonaws.com"
+          ],
+          "actions": [
+            "sts:AssumeRole"
+          ],
+          "condition": null
+        }
+      ],
+      "attached_policies": [
+        "ReadOnlyAccess"
+      ],
+      "inline_policies": [],
+      "permissions_boundary": null,
+      "kind": "role"
+    },
+    {
+      "name": "vendor-role",
+      "arn": "arn:aws:iam::123456789012:role/vendor-role",
+      "trust_statements": [
+        {
+          "effect": "Allow",
+          "principals": [
+            "arn:aws:iam::999999999999:root"
+          ],
+          "actions": [
+            "sts:AssumeRole"
+          ],
+          "condition": null
+        }
+      ],
+      "attached_policies": [
+        "DeveloperAccess"
+      ],
+      "inline_policies": [],
+      "permissions_boundary": null,
+      "kind": "role"
+    }
+  ],
+  "groups": [
+    {
+      "name": "developers",
+      "arn": "arn:aws:iam::123456789012:group/developers",
+      "attached_policies": [
+        "DeveloperAccess"
+      ],
+      "inline_policies": [],
+      "members": [
+        "grace",
+        "dave"
+      ],
+      "kind": "group"
+    },
+    {
+      "name": "admins",
+      "arn": "arn:aws:iam::123456789012:group/admins",
+      "attached_policies": [
+        "AdministratorAccess"
+      ],
+      "inline_policies": [],
+      "members": [
+        "heather"
+      ],
+      "kind": "group"
+    }
+  ],
+  "policies": [
+    {
+      "name": "AdministratorAccess",
+      "arn": "arn:aws:iam::aws:policy/AdministratorAccess",
+      "statements": [
+        {
+          "effect": "Allow",
+          "actions": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "not_action": false,
+          "condition": null
+        }
+      ],
+      "aws_managed": true
+    },
+    {
+      "name": "ReadOnlyAccess",
+      "arn": "arn:aws:iam::aws:policy/ReadOnlyAccess",
+      "statements": [
+        {
+          "effect": "Allow",
+          "actions": [
+            "s3:Get*",
+            "s3:List*",
+            "ec2:Describe*",
+            "iam:Get*",
+            "iam:List*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "not_action": false,
+          "condition": null
+        }
+      ],
+      "aws_managed": true
+    },
+    {
+      "name": "AppDeployPolicy",
+      "arn": "arn:aws:iam::123456789012:policy/AppDeployPolicy",
+      "statements": [
+        {
+          "effect": "Allow",
+          "actions": [
+            "s3:PutObject",
+            "s3:GetObject",
+            "codedeploy:*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "not_action": false,
+          "condition": null
+        }
+      ],
+      "aws_managed": false
+    },
+    {
+      "name": "DeveloperAccess",
+      "arn": "arn:aws:iam::123456789012:policy/DeveloperAccess",
+      "statements": [
+        {
+          "effect": "Allow",
+          "actions": [
+            "s3:*",
+            "lambda:InvokeFunction",
+            "logs:*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "not_action": false,
+          "condition": null
+        }
+      ],
+      "aws_managed": false
+    },
+    {
+      "name": "AutomationFullIAM",
+      "arn": "arn:aws:iam::123456789012:policy/AutomationFullIAM",
+      "statements": [
+        {
+          "effect": "Allow",
+          "actions": [
+            "iam:*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "not_action": false,
+          "condition": null
+        }
+      ],
+      "aws_managed": false
+    },
+    {
+      "name": "SecurityAuditRO",
+      "arn": "arn:aws:iam::123456789012:policy/SecurityAuditRO",
+      "statements": [
+        {
+          "effect": "Allow",
+          "actions": [
+            "iam:Get*",
+            "iam:List*",
+            "access-analyzer:*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "not_action": false,
+          "condition": null
+        }
+      ],
+      "aws_managed": false
+    }
+  ]
+}
