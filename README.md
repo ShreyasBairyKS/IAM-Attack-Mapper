@@ -61,7 +61,7 @@ account JSON, or a live AWS account via aws_collector.py (boto3)
   policy_engine.py     <- "is action X on resource Y allowed for principal P?"
         |
         v
-  escalation_rules.py  <- ~10 known privesc techniques, each emits graph edges
+  escalation_rules.py  <- ~12 known privesc techniques, each emits graph edges
   trust.py             <- direct sts:AssumeRole edges + cross-account trust findings
         |
         v
@@ -72,6 +72,7 @@ account JSON, or a live AWS account via aws_collector.py (boto3)
         |
         v
   report.py / export.py <- text/JSON report, GraphML/JSON graph export
+  diff.py                <- compares two AnalysisResults: new/resolved/changed findings
 ```
 
 ### Escalation techniques implemented
@@ -143,6 +144,13 @@ iam-mapper analyze -i data/sample_org.json --fail-on High
 # vars, or an instance/task role) into the same JSON schema, then analyze it:
 iam-mapper collect --profile my-aws-profile -o live_org.json
 iam-mapper analyze -i live_org.json --fail-on High
+
+# Continuous scanning: diff two snapshots to see what changed, and fail
+# CI only on genuine regressions (new findings, or existing ones that
+# got more severe) -- not on pre-existing findings you already know about:
+iam-mapper collect --profile my-aws-profile -o baseline.json   # e.g. last week
+iam-mapper collect --profile my-aws-profile -o current.json    # today
+iam-mapper diff baseline.json current.json --fail-on-regression
 ```
 
 ### Collecting from a live account
@@ -211,12 +219,12 @@ techniques right, not on covering every corner of IAM evaluation:
 
 - [x] Live AWS backend: pull real IAM data via `boto3` (`iam:Get*`/`List*`)
       into the same `Organization` model (`iam-mapper collect`).
+- [x] Continuous scanning + diffing (`iam-mapper diff`): "this deploy
+      opened a new escalation path."
 - [ ] Cross-account collection via `sts:AssumeRole`, for auditing an
       entire AWS Organization from one central role.
 - [ ] Web UI: interactive graph visualization (the exported GraphML/JSON
       is already shaped for this).
-- [ ] Continuous scanning + diffing ("this deploy opened a new
-      escalation path").
 - [ ] More escalation techniques (S3 bucket policy backdoors,
       `iam:CreateServiceLinkedRole` abuse, SSM `SendCommand` against an
       existing instance's role, etc).

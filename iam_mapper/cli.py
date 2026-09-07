@@ -7,8 +7,9 @@ import sys
 import click
 
 from .analyzer import analyze
+from .diff import diff_results
 from .export import export_graphml, export_json
-from .report import render_json, render_text
+from .report import render_diff_json, render_diff_text, render_json, render_text
 from .serialize import load_organization, organization_to_dict, save_organization
 from .synthetic import build_sample_organization
 
@@ -92,6 +93,34 @@ def analyze_cmd(input_path: str, fmt: str, no_color: bool, output_report: str, o
         threshold = SEVERITY_ORDER.index(fail_on)
         if any(SEVERITY_ORDER.index(f.severity) <= threshold for f in result.findings if f.kind != "already_admin"):
             sys.exit(1)
+
+
+@main.command(name="diff")
+@click.argument("baseline", type=click.Path(exists=True))
+@click.argument("current", type=click.Path(exists=True))
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text", show_default=True)
+@click.option("--no-color", is_flag=True, help="Disable ANSI colors in text output.")
+@click.option("--fail-on-regression", is_flag=True,
+              help="Exit non-zero if anything new appeared or got more severe since the baseline (for CI use).")
+def diff_cmd(baseline: str, current: str, fmt: str, no_color: bool, fail_on_regression: bool):
+    """Compare two account JSON snapshots and report newly introduced or resolved escalation paths.
+
+    Typical continuous-scanning use: keep a BASELINE snapshot (e.g. last
+    week's `iam-mapper collect` output) and diff it against a fresh
+    CURRENT one to answer "did this deploy open a new escalation path?"
+    without re-flagging findings that were already there.
+    """
+    old_result = analyze(load_organization(baseline))
+    new_result = analyze(load_organization(current))
+    result = diff_results(old_result, new_result)
+
+    if fmt == "json":
+        click.echo(render_diff_json(result))
+    else:
+        click.echo(render_diff_text(result, use_color=not no_color))
+
+    if fail_on_regression and result.has_regression():
+        sys.exit(1)
 
 
 if __name__ == "__main__":

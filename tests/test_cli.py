@@ -159,3 +159,37 @@ def test_collect_command_errors_without_boto3(runner, monkeypatch, tmp_path):
     result = runner.invoke(main, ["collect", "-o", str(tmp_path / "x.json")])
     assert result.exit_code != 0
     assert "boto3 is required" in result.output
+
+
+def test_diff_command_reports_new_findings(runner, clean_org_path, sample_org_path):
+    result = runner.invoke(main, ["diff", clean_org_path, sample_org_path])
+
+    assert result.exit_code == 0  # no --fail-on-regression: reporting only
+    assert "Diff Report" in result.output
+    assert "alice" in result.output
+
+
+def test_diff_command_json_output(runner, clean_org_path, sample_org_path):
+    result = runner.invoke(main, ["diff", clean_org_path, sample_org_path, "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["added"]
+    assert not payload["removed"]
+
+
+def test_diff_command_fail_on_regression_triggers_nonzero_exit(runner, clean_org_path, sample_org_path):
+    result = runner.invoke(main, ["diff", clean_org_path, sample_org_path, "--fail-on-regression"])
+    assert result.exit_code == 1
+
+
+def test_diff_command_no_regression_against_itself(runner, sample_org_path):
+    result = runner.invoke(main, ["diff", sample_org_path, sample_org_path, "--fail-on-regression"])
+    assert result.exit_code == 0
+    assert "No changes between the two snapshots." in result.output
+
+
+def test_diff_command_missing_file_errors(runner, sample_org_path, tmp_path):
+    missing = tmp_path / "does_not_exist.json"
+    result = runner.invoke(main, ["diff", sample_org_path, str(missing)])
+    assert result.exit_code != 0
