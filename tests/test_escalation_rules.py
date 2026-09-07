@@ -67,6 +67,60 @@ def test_pass_role_lambda_requires_matching_trust():
     assert any(e.technique == "PassRole+EC2" and e.source == "u" and e.target == "target-role" for e in edges)
 
 
+def test_pass_role_cloudformation_detected():
+    org = _account()
+    org.add_user(User(
+        name="u", arn="arn:aws:iam::111111111111:user/u",
+        inline_policies=[Policy(
+            name="p", arn="arn:aws:iam::111111111111:policy/p",
+            statements=[
+                Statement(effect="Allow", actions=["iam:PassRole"], resources=["arn:aws:iam::111111111111:role/target-role"]),
+                Statement(effect="Allow", actions=["cloudformation:CreateStack"]),
+            ],
+        )],
+    ))
+    org.add_role(Role(
+        name="target-role", arn="arn:aws:iam::111111111111:role/target-role",
+        attached_policies=["Admin"],
+        trust_statements=[TrustStatement(effect="Allow", principals=["cloudformation.amazonaws.com"])],
+    ))
+    org.add_policy(Policy(name="Admin", arn="arn:aws:iam::aws:policy/Admin", statements=[Statement(effect="Allow", actions=["*"], resources=["*"])]))
+
+    edges = all_escalation_edges(org)
+    assert any(e.technique == "PassRole+CloudFormation" and e.source == "u" and e.target == "target-role" for e in edges)
+
+
+def test_pass_role_datapipeline_requires_both_companion_actions():
+    org = _account()
+    org.add_user(User(
+        name="u", arn="arn:aws:iam::111111111111:user/u",
+        inline_policies=[Policy(
+            name="p", arn="arn:aws:iam::111111111111:policy/p",
+            statements=[
+                Statement(effect="Allow", actions=["iam:PassRole"], resources=["arn:aws:iam::111111111111:role/target-role"]),
+                # Only half of the required DataPipeline actions -- should NOT fire.
+                Statement(effect="Allow", actions=["datapipeline:CreatePipeline"]),
+            ],
+        )],
+    ))
+    org.add_role(Role(
+        name="target-role", arn="arn:aws:iam::111111111111:role/target-role",
+        attached_policies=["Admin"],
+        trust_statements=[TrustStatement(effect="Allow", principals=["datapipeline.amazonaws.com"])],
+    ))
+    org.add_policy(Policy(name="Admin", arn="arn:aws:iam::aws:policy/Admin", statements=[Statement(effect="Allow", actions=["*"], resources=["*"])]))
+
+    edges = all_escalation_edges(org)
+    assert not any(e.technique == "PassRole+DataPipeline" and e.source == "u" for e in edges)
+
+    # Grant the second required action -- now it should fire.
+    org.users["u"].inline_policies[0].statements.append(
+        Statement(effect="Allow", actions=["datapipeline:PutPipelineDefinition"])
+    )
+    edges = all_escalation_edges(org)
+    assert any(e.technique == "PassRole+DataPipeline" and e.source == "u" and e.target == "target-role" for e in edges)
+
+
 def test_policy_version_escalation_self():
     org = _account()
     org.add_policy(Policy(name="AppPolicy", arn="arn:aws:iam::111111111111:policy/AppPolicy", statements=[Statement(effect="Allow", actions=["s3:*"], resources=["*"])]))

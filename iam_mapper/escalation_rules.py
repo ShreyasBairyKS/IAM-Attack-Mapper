@@ -267,6 +267,14 @@ _PASS_ROLE_SERVICES = {
         "companion_actions": ["glue:CreateDevEndpoint"],
         "trusted_service": "glue.amazonaws.com",
     },
+    "PassRole+CloudFormation": {
+        "companion_actions": ["cloudformation:CreateStack"],
+        "trusted_service": "cloudformation.amazonaws.com",
+    },
+    "PassRole+DataPipeline": {
+        "companion_actions": ["datapipeline:CreatePipeline", "datapipeline:PutPipelineDefinition"],
+        "trusted_service": "datapipeline.amazonaws.com",
+    },
 }
 
 

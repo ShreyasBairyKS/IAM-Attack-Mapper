@@ -89,7 +89,7 @@ technique, implemented as a rule that adds a `source -> target` edge
 | `InlinePolicyInjection` | `iam:Put{User,Role,Group}Policy` lets you write a fresh admin inline policy. |
 | `AddUserToGroup` | `iam:AddUserToGroup` lets you add a principal (e.g. yourself) to a more privileged group. |
 | `UpdateAssumeRolePolicy` | `iam:UpdateAssumeRolePolicy` lets you rewrite a role's trust policy to add yourself as trusted. |
-| `PassRole+Lambda` / `PassRole+EC2` / `PassRole+GlueDevEndpoint` | `iam:PassRole` plus the matching service action lets you run code/instances *as* that role. |
+| `PassRole+Lambda` / `PassRole+EC2` / `PassRole+GlueDevEndpoint` / `PassRole+CloudFormation` / `PassRole+DataPipeline` | `iam:PassRole` plus the matching service action lets you run code/instances *as* that role. |
 | `AssumeRole` | (not an escalation on its own) direct, legitimate `sts:AssumeRole` reachability — still part of the graph, since an overly-trusting role is exactly what this tool should surface. |
 
 This is a representative subset, not the full list of ~20 documented
@@ -217,8 +217,9 @@ techniques right, not on covering every corner of IAM evaluation:
       is already shaped for this).
 - [ ] Continuous scanning + diffing ("this deploy opened a new
       escalation path").
-- [ ] More escalation techniques (S3 bucket policy backdoors, more
-      `PassRole` + service combinations, SSM `SendCommand`, etc).
+- [ ] More escalation techniques (S3 bucket policy backdoors,
+      `iam:CreateServiceLinkedRole` abuse, SSM `SendCommand` against an
+      existing instance's role, etc).
 - [ ] SCP-aware evaluation for multi-account AWS Organizations.
 - [ ] Multi-cloud: the same graph-reachability model applied to GCP IAM
       and Azure RBAC.
