@@ -76,6 +76,16 @@ def test_analyze_json_output(runner, sample_org_path):
     assert any(f["source"] == "alice" for f in payload["findings"])
 
 
+def test_analyze_sarif_output(runner, sample_org_path):
+    result = runner.invoke(main, ["analyze", "-i", sample_org_path, "--format", "sarif"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["version"] == "2.1.0"
+    assert payload["runs"][0]["results"]
+    assert payload["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == sample_org_path
+
+
 def test_analyze_output_report_writes_file(runner, sample_org_path, tmp_path):
     report_path = tmp_path / "report.txt"
     result = runner.invoke(main, ["analyze", "-i", sample_org_path, "--output-report", str(report_path)])
@@ -176,6 +186,15 @@ def test_diff_command_json_output(runner, clean_org_path, sample_org_path):
     payload = json.loads(result.output)
     assert payload["added"]
     assert not payload["removed"]
+
+
+def test_diff_command_sarif_output(runner, clean_org_path, sample_org_path):
+    result = runner.invoke(main, ["diff", clean_org_path, sample_org_path, "--format", "sarif"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["version"] == "2.1.0"
+    assert payload["runs"][0]["results"]
 
 
 def test_diff_command_fail_on_regression_triggers_nonzero_exit(runner, clean_org_path, sample_org_path):

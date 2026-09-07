@@ -151,6 +151,12 @@ iam-mapper analyze -i live_org.json --fail-on High
 iam-mapper collect --profile my-aws-profile -o baseline.json   # e.g. last week
 iam-mapper collect --profile my-aws-profile -o current.json    # today
 iam-mapper diff baseline.json current.json --fail-on-regression
+
+# SARIF, for GitHub code scanning (Security tab) or any SARIF-consuming
+# tool -- `diff --format sarif` includes only new/worsened findings, so
+# each run's upload reflects genuinely new alerts, not the whole backlog:
+iam-mapper analyze -i data/sample_org.json --format sarif > results.sarif
+iam-mapper diff baseline.json current.json --format sarif > results.sarif
 ```
 
 ### Collecting from a live account
@@ -169,6 +175,12 @@ iam-mapper collect --profile my-aws-profile --region us-east-1 -o live_org.json
 `--account-id` overrides the account id if your credentials belong to a
 different account than the one being audited; `--profile`/`--region`
 are passed straight through to `boto3.Session`.
+
+A least-privilege IAM policy for the credentials running `collect` is
+provided at [`data/collect-readonly-policy.json`](data/collect-readonly-policy.json)
+— attach it to whatever user/role you point at the account being
+audited; it grants exactly the `iam:List*`/`iam:Get*` + `sts:GetCallerIdentity`
+actions the collector makes, nothing more.
 
 ### The account JSON format
 
@@ -238,6 +250,19 @@ techniques right, not on covering every corner of IAM evaluation:
 pip install -r requirements-dev.txt
 pytest
 ```
+
+### Releasing to PyPI
+
+[`.github/workflows/publish.yml`](.github/workflows/publish.yml) builds
+and publishes the package whenever a GitHub Release is published, using
+PyPI's [Trusted Publisher](https://docs.pypi.org/trusted-publishers/)
+(OIDC) flow — no `PYPI_API_TOKEN` secret is stored in this repo. One-time
+setup on [pypi.org](https://pypi.org) (project owner only): under the
+project's *Publishing* settings, add a trusted publisher with owner
+`ShreyasBairyKS`, repository `IAM-Attack-Mapper`, workflow
+`publish.yml`, and environment `pypi`. After that, cutting a GitHub
+Release (bump the `version` in `pyproject.toml` first) publishes
+automatically.
 
 ## License
 

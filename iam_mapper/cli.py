@@ -9,7 +9,14 @@ import click
 from .analyzer import analyze
 from .diff import diff_results
 from .export import export_graphml, export_json
-from .report import render_diff_json, render_diff_text, render_json, render_text
+from .report import (
+    render_diff_json,
+    render_diff_sarif,
+    render_diff_text,
+    render_json,
+    render_sarif,
+    render_text,
+)
 from .serialize import load_organization, organization_to_dict, save_organization
 from .synthetic import build_sample_organization
 
@@ -53,7 +60,8 @@ def collect(profile: str, region: str, account_id: str, output: str):
 
 @main.command(name="analyze")
 @click.option("-i", "--input", "input_path", required=True, help="Path to an account JSON file (see data/sample_org.json for the schema).")
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text", show_default=True)
+@click.option("--format", "fmt", type=click.Choice(["text", "json", "sarif"]), default="text", show_default=True,
+              help="`sarif` produces SARIF 2.1.0, for GitHub code scanning or any SARIF-consuming tool.")
 @click.option("--no-color", is_flag=True, help="Disable ANSI colors in text output.")
 @click.option("--output-report", default=None, help="Write the report to a file instead of stdout.")
 @click.option("--output-graph", default=None, help="Export the reachability graph (path ending in .graphml or .json).")
@@ -66,6 +74,8 @@ def analyze_cmd(input_path: str, fmt: str, no_color: bool, output_report: str, o
 
     if fmt == "json":
         rendered = render_json(result)
+    elif fmt == "sarif":
+        rendered = render_sarif(result, source_path=input_path)
     else:
         rendered = render_text(result, use_color=not no_color)
 
@@ -98,7 +108,8 @@ def analyze_cmd(input_path: str, fmt: str, no_color: bool, output_report: str, o
 @main.command(name="diff")
 @click.argument("baseline", type=click.Path(exists=True))
 @click.argument("current", type=click.Path(exists=True))
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text", show_default=True)
+@click.option("--format", "fmt", type=click.Choice(["text", "json", "sarif"]), default="text", show_default=True,
+              help="`sarif` includes only new/worsened findings (not resolved ones) -- suited to a per-run code scanning upload.")
 @click.option("--no-color", is_flag=True, help="Disable ANSI colors in text output.")
 @click.option("--fail-on-regression", is_flag=True,
               help="Exit non-zero if anything new appeared or got more severe since the baseline (for CI use).")
@@ -116,6 +127,8 @@ def diff_cmd(baseline: str, current: str, fmt: str, no_color: bool, fail_on_regr
 
     if fmt == "json":
         click.echo(render_diff_json(result))
+    elif fmt == "sarif":
+        click.echo(render_diff_sarif(result, source_path=current))
     else:
         click.echo(render_diff_text(result, use_color=not no_color))
 

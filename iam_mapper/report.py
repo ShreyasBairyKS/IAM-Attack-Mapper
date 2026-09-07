@@ -134,3 +134,84 @@ def render_diff_json(diff: FindingsDiff) -> str:
         ],
     }
     return json.dumps(payload, indent=2)
+
+
+# --------------------------------------------------------------------------
+# SARIF 2.1.0, for GitHub code scanning / any SARIF-consuming tool.
+# --------------------------------------------------------------------------
+
+_TOOL_VERSION = "0.1.0"
+_TOOL_INFO_URI = "https://github.com/ShreyasBairyKS/IAM-Attack-Mapper"
+
+# error/warning/note per GitHub's recommended severity->level mapping.
+_SARIF_LEVEL = {"Critical": "error", "High": "error", "Medium": "warning", "Low": "note", "Info": "note"}
+# GitHub's "Security severity" badge (0.0-10.0, CVSS-like).
+_SARIF_SECURITY_SEVERITY = {"Critical": "9.5", "High": "7.5", "Medium": "5.0", "Low": "3.0", "Info": "0.0"}
+
+_SARIF_RULES = {
+    "self_escalation": ("SelfEscalation", "Principal can directly escalate its own privileges to admin-equivalent access."),
+    "path": ("EscalationPath", "Principal can reach admin-equivalent access via one or more privilege-escalation techniques."),
+    "already_admin": ("ExistingAdmin", "Principal already has admin-equivalent (\"*\"/\"*\" or iam:*) access."),
+    "external_trust": ("TrustPolicyHygiene", "Role's trust policy trusts an external AWS account or a wildcard principal."),
+}
+
+
+def _sarif_rule(kind: str) -> dict:
+    name, description = _SARIF_RULES.get(kind, (kind, kind))
+    return {
+        "id": kind,
+        "name": name,
+        "shortDescription": {"text": description},
+        "defaultConfiguration": {"level": "warning"},
+    }
+
+
+def _sarif_result(finding: Finding, artifact_uri: str) -> dict:
+    return {
+        "ruleId": finding.kind,
+        "level": _SARIF_LEVEL.get(finding.severity, "warning"),
+        "message": {"text": _finding_line(finding)},
+        "locations": [{
+            "physicalLocation": {
+                "artifactLocation": {"uri": artifact_uri},
+                "region": {"startLine": 1},
+            },
+        }],
+        "properties": {
+            "security-severity": _SARIF_SECURITY_SEVERITY.get(finding.severity, "0.0"),
+            "tags": ["security", finding.kind],
+        },
+    }
+
+
+def _sarif_document(findings: list[Finding], artifact_uri: str) -> dict:
+    kinds_present = sorted({f.kind for f in findings}) or list(_SARIF_RULES)
+    return {
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "iam-attack-mapper",
+                    "informationUri": _TOOL_INFO_URI,
+                    "version": _TOOL_VERSION,
+                    "rules": [_sarif_rule(k) for k in kinds_present],
+                },
+            },
+            "results": [_sarif_result(f, artifact_uri) for f in findings],
+        }],
+    }
+
+
+def render_sarif(result: AnalysisResult, source_path: str = "account.json") -> str:
+    """SARIF has no notion of "principal"/"account" -- results are anchored
+    to the account snapshot file that was analyzed (line 1), same as other
+    non-file-based scanners do when there's no real source location."""
+    return json.dumps(_sarif_document(result.findings, source_path), indent=2)
+
+
+def render_diff_sarif(diff: FindingsDiff, source_path: str = "account.json") -> str:
+    """Only `added` and `changed` (in their *new* state) are live alerts --
+    `removed` findings are resolved and shouldn't show up as active issues."""
+    findings = list(diff.added) + [c.new for c in diff.changed]
+    return json.dumps(_sarif_document(findings, source_path), indent=2)

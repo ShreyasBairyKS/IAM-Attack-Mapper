@@ -6,6 +6,7 @@ no real AWS account, network access, or credentials required.
 """
 
 import json
+import pathlib
 
 import boto3
 import pytest
@@ -262,3 +263,39 @@ def test_collect_organization_account_id_override():
     session = boto3.Session(region_name="us-east-1")
     org = collect_organization(session, account_id="999999999999")
     assert org.account_id == "999999999999"
+
+
+# --------------------------------------------------------------------------
+# The shipped least-privilege policy (data/collect-readonly-policy.json)
+# must cover exactly the read-only API calls collect_organization() makes.
+# --------------------------------------------------------------------------
+
+_EXPECTED_COLLECT_ACTIONS = {
+    "iam:ListUsers",
+    "iam:ListRoles",
+    "iam:ListGroups",
+    "iam:ListGroupsForUser",
+    "iam:ListAttachedUserPolicies",
+    "iam:ListAttachedRolePolicies",
+    "iam:ListAttachedGroupPolicies",
+    "iam:ListUserPolicies",
+    "iam:ListRolePolicies",
+    "iam:ListGroupPolicies",
+    "iam:GetUserPolicy",
+    "iam:GetRolePolicy",
+    "iam:GetGroupPolicy",
+    "iam:GetGroup",
+    "iam:GetLoginProfile",
+    "iam:ListAccessKeys",
+    "iam:GetPolicy",
+    "iam:GetPolicyVersion",
+    "sts:GetCallerIdentity",
+}
+
+
+def test_collect_readonly_policy_matches_expected_actions():
+    policy_path = pathlib.Path(__file__).resolve().parent.parent / "data" / "collect-readonly-policy.json"
+    policy = json.loads(policy_path.read_text())
+    actions = set(policy["Statement"][0]["Action"])
+    assert actions == _EXPECTED_COLLECT_ACTIONS
+    assert all(s["Effect"] == "Allow" for s in policy["Statement"])
