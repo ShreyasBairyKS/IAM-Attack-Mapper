@@ -60,6 +60,36 @@ class TrustStatement:
     condition: Optional[dict] = None
 
 
+@dataclass
+class ResourcePolicyStatement:
+    """A statement inside a resource-based policy (S3 bucket policy, KMS key
+    policy, ...). Structurally an identity-policy statement with a
+    ``Principal`` added, since that's what a resource policy actually is.
+    """
+
+    effect: str
+    principals: List[str]
+    actions: List[str]
+    resources: List[str] = field(default_factory=lambda: ["*"])
+    condition: Optional[dict] = None
+
+
+@dataclass
+class ResourcePolicy:
+    """A resource-based policy attached to a non-IAM resource.
+
+    v1 scope is deliberately narrow -- this only models the policy
+    *document* well enough to flag external-account/wildcard trust (the
+    same hygiene check ``trust.py`` already does for role trust
+    policies), not full evaluation of what access a resource policy
+    actually grants (see README "Limitations").
+    """
+
+    resource_arn: str
+    resource_type: str  # "s3_bucket" | "kms_key" (extensible)
+    statements: List[ResourcePolicyStatement] = field(default_factory=list)
+
+
 # --------------------------------------------------------------------------
 # Principals
 # --------------------------------------------------------------------------
@@ -107,13 +137,25 @@ Principal = Union[User, Role]
 
 @dataclass
 class Organization:
-    """A full account snapshot: every principal, group, and managed policy."""
+    """A full account snapshot: every principal, group, and managed policy.
+
+    ``scps`` is the *effective* set of Service Control Policies that apply
+    to this account -- i.e. already flattened from wherever they're
+    attached in the real AWS Organization (root, each OU, and the account
+    itself). This model doesn't represent the OU hierarchy; a live
+    collector is expected to walk it and hand back the flattened result
+    (see ``aws_collector.collect_organization(..., include_scps=True)``).
+    An SCP never *grants* anything -- like a permissions boundary, it can
+    only narrow what the account's identity policies already allow.
+    """
 
     account_id: str
     users: Dict[str, User] = field(default_factory=dict)
     roles: Dict[str, Role] = field(default_factory=dict)
     groups: Dict[str, Group] = field(default_factory=dict)
     policies: Dict[str, Policy] = field(default_factory=dict)  # keyed by Policy.name
+    scps: List[Policy] = field(default_factory=list)
+    resource_policies: List[ResourcePolicy] = field(default_factory=list)
 
     def add_policy(self, policy: Policy) -> None:
         self.policies[policy.name] = policy

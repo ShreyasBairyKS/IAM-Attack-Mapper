@@ -26,6 +26,7 @@ _KIND_LABEL = {
     "path": "ESCALATION PATH",
     "already_admin": "EXISTING ADMIN",
     "external_trust": "TRUST POLICY HYGIENE",
+    "external_resource_trust": "RESOURCE POLICY HYGIENE",
 }
 
 
@@ -153,6 +154,7 @@ _SARIF_RULES = {
     "path": ("EscalationPath", "Principal can reach admin-equivalent access via one or more privilege-escalation techniques."),
     "already_admin": ("ExistingAdmin", "Principal already has admin-equivalent (\"*\"/\"*\" or iam:*) access."),
     "external_trust": ("TrustPolicyHygiene", "Role's trust policy trusts an external AWS account or a wildcard principal."),
+    "external_resource_trust": ("ResourcePolicyHygiene", "A resource's policy (e.g. S3 bucket policy) trusts an external AWS account or a wildcard principal."),
 }
 
 

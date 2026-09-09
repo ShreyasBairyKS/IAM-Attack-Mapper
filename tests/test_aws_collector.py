@@ -7,17 +7,22 @@ no real AWS account, network access, or credentials required.
 
 import json
 import pathlib
+from unittest.mock import MagicMock
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 
 from iam_mapper.analyzer import analyze
 from iam_mapper.aws_collector import (
+    _collect_s3_bucket_policies,
+    _collect_scps,
     _permissions_boundary_name,
     collect_organization,
     normalize_policy_document,
     normalize_principals,
+    normalize_resource_policy_document,
     normalize_statement,
     normalize_trust_document,
 )
@@ -105,6 +110,30 @@ def test_normalize_trust_document_single_statement_as_dict_not_list():
     trust_statements = normalize_trust_document(doc)
     assert len(trust_statements) == 1
     assert trust_statements[0].principals == ["ec2.amazonaws.com"]
+
+
+def test_normalize_resource_policy_document_single_string_action_and_principal():
+    doc = {"Statement": [{
+        "Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::b/*",
+    }]}
+    statements = normalize_resource_policy_document(doc)
+    assert len(statements) == 1
+    assert statements[0].principals == ["*"]
+    assert statements[0].actions == ["s3:GetObject"]
+    assert statements[0].resources == ["arn:aws:s3:::b/*"]
+
+
+def test_normalize_resource_policy_document_missing_resource_defaults_to_wildcard():
+    doc = {"Statement": [{"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::999999999999:root"}, "Action": "s3:GetObject"}]}
+    statements = normalize_resource_policy_document(doc)
+    assert statements[0].resources == ["*"]
+
+
+def test_normalize_resource_policy_document_single_statement_as_dict_not_list():
+    doc = {"Statement": {"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject"}}
+    statements = normalize_resource_policy_document(doc)
+    assert len(statements) == 1
+    assert statements[0].principals == ["*"]
 
 
 def test_permissions_boundary_name_extracted_when_present():
@@ -263,6 +292,172 @@ def test_collect_organization_account_id_override():
     session = boto3.Session(region_name="us-east-1")
     org = collect_organization(session, account_id="999999999999")
     assert org.account_id == "999999999999"
+
+
+# --------------------------------------------------------------------------
+# SCP collection (opt-in, via AWS Organizations), against moto's mock.
+# --------------------------------------------------------------------------
+
+
+def _setup_org_with_scp_hierarchy(orgs, statements_by_level):
+    """Creates root -> OU -> account, attaches one SCP per level (root/ou/account)
+    from `statements_by_level` (a dict with any of those three keys), and
+    returns the account id. The default FullAWSAccess SCP is always present
+    at the root too, same as a real AWS Organization."""
+    orgs.create_organization(FeatureSet="ALL")
+    root_id = orgs.list_roots()["Roots"][0]["Id"]
+    account_id = orgs.list_accounts()["Accounts"][0]["Id"]
+    orgs.enable_policy_type(RootId=root_id, PolicyType="SERVICE_CONTROL_POLICY")
+    ou_id = orgs.create_organizational_unit(ParentId=root_id, Name="eng")["OrganizationalUnit"]["Id"]
+    orgs.move_account(AccountId=account_id, SourceParentId=root_id, DestinationParentId=ou_id)
+
+    target_by_level = {"root": root_id, "ou": ou_id, "account": account_id}
+    for level, statements in statements_by_level.items():
+        policy_id = orgs.create_policy(
+            Name=f"scp-{level}", Description="x", Type="SERVICE_CONTROL_POLICY",
+            Content=json.dumps({"Version": "2012-10-17", "Statement": statements}),
+        )["Policy"]["PolicySummary"]["Id"]
+        orgs.attach_policy(PolicyId=policy_id, TargetId=target_by_level[level])
+
+    return account_id
+
+
+@mock_aws
+def test_collect_scps_walks_full_hierarchy_and_dedupes():
+    session = boto3.Session(region_name="us-east-1")
+    orgs = session.client("organizations")
+    account_id = _setup_org_with_scp_hierarchy(orgs, {
+        "root": [{"Effect": "Allow", "Action": ["s3:*", "iam:*", "ec2:*"], "Resource": "*"}],
+        "ou": [{"Effect": "Allow", "Action": ["s3:*", "iam:*"], "Resource": "*"}],
+        "account": [{"Effect": "Deny", "Action": "iam:DeleteUser", "Resource": "*"}],
+    })
+
+    scps = _collect_scps(session, account_id)
+    names = {p.name for p in scps}
+    # The 3 explicitly attached SCPs, plus the default FullAWSAccess at root.
+    assert names == {"scp-root", "scp-ou", "scp-account", "FullAWSAccess"}
+
+
+@mock_aws
+def test_collect_organization_scp_blocks_self_escalation_end_to_end():
+    """The money test: a self-escalation planted via moto's mocked IAM
+    should stop being detected once an SCP that blocks IAM entirely is
+    attached to the account -- proving SCP intersection actually changes
+    analyzer output through the full collect -> analyze pipeline."""
+    session = boto3.Session(region_name="us-east-1")
+    iam = session.client("iam")
+    orgs = session.client("organizations")
+
+    app_policy_arn = iam.create_policy(
+        PolicyName="app-policy",
+        PolicyDocument=json.dumps({"Version": "2012-10-17", "Statement": [
+            {"Effect": "Allow", "Action": ["s3:PutObject"], "Resource": "*"},
+        ]}),
+    )["Policy"]["Arn"]
+    iam.create_user(UserName="alice")
+    iam.attach_user_policy(UserName="alice", PolicyArn=app_policy_arn)
+    iam.put_user_policy(
+        UserName="alice", PolicyName="self-manage",
+        PolicyDocument=json.dumps({"Version": "2012-10-17", "Statement": [
+            {"Effect": "Allow", "Action": ["iam:CreatePolicyVersion", "iam:SetDefaultPolicyVersion"], "Resource": app_policy_arn},
+        ]}),
+    )
+
+    # Without an SCP: self-escalation is found (sanity check, matches the
+    # equivalent no-SCP test above).
+    org_without_scp = collect_organization(session, include_scps=False)
+    assert any(f.source == "alice" and f.kind == "self_escalation" for f in analyze(org_without_scp).findings)
+
+    account_id = _setup_org_with_scp_hierarchy(orgs, {
+        "account": [{"Effect": "Allow", "Action": ["s3:*"], "Resource": "*"}],  # no iam:* at all
+    })
+    org_with_scp = collect_organization(session, account_id=account_id, include_scps=True)
+    assert org_with_scp.scps  # collected something
+    assert not any(f.source == "alice" and f.kind == "self_escalation" for f in analyze(org_with_scp).findings)
+
+
+@mock_aws
+def test_collect_organization_include_scps_false_leaves_scps_empty():
+    session = boto3.Session(region_name="us-east-1")
+    orgs = session.client("organizations")
+    _setup_org_with_scp_hierarchy(orgs, {"account": [{"Effect": "Deny", "Action": "iam:*", "Resource": "*"}]})
+
+    org = collect_organization(session, include_scps=False)
+    assert org.scps == []
+
+
+# --------------------------------------------------------------------------
+# S3 bucket policy collection (opt-in), against moto's mock.
+# --------------------------------------------------------------------------
+
+
+@mock_aws
+def test_collect_s3_bucket_policies_skips_buckets_with_no_policy():
+    session = boto3.Session(region_name="us-east-1")
+    s3 = session.client("s3")
+    s3.create_bucket(Bucket="open-bucket")
+    s3.put_bucket_policy(Bucket="open-bucket", Policy=json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::open-bucket/*"}],
+    }))
+    s3.create_bucket(Bucket="private-bucket")  # no policy at all
+
+    resource_policies = _collect_s3_bucket_policies(session)
+
+    assert len(resource_policies) == 1
+    rp = resource_policies[0]
+    assert rp.resource_arn == "arn:aws:s3:::open-bucket"
+    assert rp.resource_type == "s3_bucket"
+    assert rp.statements[0].principals == ["*"]
+
+
+@mock_aws
+def test_collect_organization_include_s3_buckets_flag_flows_into_analyze():
+    session = boto3.Session(region_name="us-east-1")
+    session.client("s3").create_bucket(Bucket="open-bucket")
+    session.client("s3").put_bucket_policy(Bucket="open-bucket", Policy=json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::open-bucket/*"}],
+    }))
+
+    org = collect_organization(session, include_s3_buckets=True)
+    assert org.resource_policies
+
+    findings = [f for f in analyze(org).findings if f.kind == "external_resource_trust"]
+    assert len(findings) == 1
+    assert "open-bucket" in findings[0].summary
+
+
+def test_collect_s3_bucket_policies_reraises_unexpected_errors():
+    """NoSuchBucketPolicy is the normal "no policy set" case and is
+    swallowed; any other error (e.g. AccessDenied) must propagate."""
+    s3_client = MagicMock()
+    s3_client.list_buckets.return_value = {"Buckets": [{"Name": "some-bucket"}]}
+    s3_client.exceptions.ClientError = ClientError
+    s3_client.get_bucket_policy.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "nope"}}, "GetBucketPolicy",
+    )
+
+    class _FakeSession:
+        def client(self, name):
+            assert name == "s3"
+            return s3_client
+
+    with pytest.raises(ClientError):
+        _collect_s3_bucket_policies(_FakeSession())
+
+
+@mock_aws
+def test_collect_organization_include_s3_buckets_false_leaves_it_empty():
+    session = boto3.Session(region_name="us-east-1")
+    session.client("s3").create_bucket(Bucket="open-bucket")
+    session.client("s3").put_bucket_policy(Bucket="open-bucket", Policy=json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": "*"}],
+    }))
+
+    org = collect_organization(session, include_s3_buckets=False)
+    assert org.resource_policies == []
 
 
 # --------------------------------------------------------------------------

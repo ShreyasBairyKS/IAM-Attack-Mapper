@@ -47,7 +47,7 @@ def test_render_sarif_empty_findings_still_valid():
     doc = json.loads(render_sarif(result, source_path="x.json"))
     assert doc["runs"][0]["results"] == []
     # Falls back to the full rule catalog when there are no findings to derive it from.
-    assert len(doc["runs"][0]["tool"]["driver"]["rules"]) == 4
+    assert len(doc["runs"][0]["tool"]["driver"]["rules"]) == 5
 
 
 def test_render_diff_sarif_excludes_resolved_findings():

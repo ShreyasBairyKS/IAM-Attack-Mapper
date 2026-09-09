@@ -10,6 +10,7 @@ import networkx as nx
 from .graph_builder import build_graph, self_escalation_techniques
 from .models import Organization
 from .policy_engine import PolicyEngine
+from .resource_trust import find_external_resource_trusts
 from .trust import find_external_trusts
 
 SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Info"]
@@ -33,7 +34,7 @@ class Hop:
 
 @dataclass
 class Finding:
-    kind: str  # "self_escalation" | "path" | "already_admin" | "external_trust"
+    kind: str  # "self_escalation" | "path" | "already_admin" | "external_trust" | "external_resource_trust"
     severity: str
     source: Optional[str] = None
     target: Optional[str] = None
@@ -150,6 +151,19 @@ def analyze(org: Organization) -> AnalysisResult:
                 severity=severity,
                 target=ext.role,
                 summary=f"role '{ext.role}' {ext.note} ('{ext.principal_ref}')",
+            )
+        )
+
+    # 5. Resource-policy hygiene: S3 buckets etc. trusting an external
+    #    account or wildcard principal.
+    for ext in find_external_resource_trusts(org, org.account_id):
+        severity = "High" if ext.principal_ref == "*" else "Medium"
+        findings.append(
+            Finding(
+                kind="external_resource_trust",
+                severity=severity,
+                target=ext.resource_arn,
+                summary=f"{ext.resource_type} '{ext.resource_arn}' {ext.note} ('{ext.principal_ref}')",
             )
         )
 

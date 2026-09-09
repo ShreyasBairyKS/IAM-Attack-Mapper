@@ -156,6 +156,80 @@ def test_collect_command_writes_org_json(runner, tmp_path):
     assert any(u["name"] == "alice" for u in data["users"])
 
 
+@mock_aws
+def test_collect_command_include_s3_buckets_flag(runner, tmp_path):
+    session = boto3.Session(region_name="us-east-1")
+    session.client("iam").create_user(UserName="alice")
+    session.client("s3").create_bucket(Bucket="open-bucket")
+    session.client("s3").put_bucket_policy(Bucket="open-bucket", Policy=json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject", "Resource": "*"}],
+    }))
+
+    out_path = tmp_path / "live_org.json"
+    result = runner.invoke(main, ["collect", "--region", "us-east-1", "--include-s3-buckets", "-o", str(out_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(out_path.read_text())
+    assert data["resource_policies"]
+    assert data["resource_policies"][0]["resource_arn"] == "arn:aws:s3:::open-bucket"
+
+
+@mock_aws
+def test_collect_command_include_scps_flag(runner, tmp_path):
+    session = boto3.Session(region_name="us-east-1")
+    session.client("iam").create_user(UserName="alice")
+    orgs = session.client("organizations")
+    orgs.create_organization(FeatureSet="ALL")
+    root_id = orgs.list_roots()["Roots"][0]["Id"]
+    account_id = orgs.list_accounts()["Accounts"][0]["Id"]
+    orgs.enable_policy_type(RootId=root_id, PolicyType="SERVICE_CONTROL_POLICY")
+    policy_id = orgs.create_policy(
+        Name="deny-iam", Description="x", Type="SERVICE_CONTROL_POLICY",
+        Content=json.dumps({"Version": "2012-10-17", "Statement": [{"Effect": "Deny", "Action": "iam:*", "Resource": "*"}]}),
+    )["Policy"]["PolicySummary"]["Id"]
+    orgs.attach_policy(PolicyId=policy_id, TargetId=account_id)
+
+    out_path = tmp_path / "live_org.json"
+    result = runner.invoke(main, [
+        "collect", "--region", "us-east-1", "--account-id", account_id, "--include-scps", "-o", str(out_path),
+    ])
+
+    assert result.exit_code == 0
+    data = json.loads(out_path.read_text())
+    assert any(p["name"] == "deny-iam" for p in data["scps"])
+
+
+def test_collect_command_scp_access_denied_gives_friendly_error(runner, monkeypatch, tmp_path):
+    from botocore.exceptions import ClientError
+
+    def fake_collect_organization(*args, **kwargs):
+        raise ClientError(
+            {"Error": {"Code": "AccessDeniedException", "Message": "not authorized"}}, "ListPoliciesForTarget",
+        )
+
+    monkeypatch.setattr("iam_mapper.aws_collector.collect_organization", fake_collect_organization)
+
+    result = runner.invoke(main, ["collect", "--include-scps", "-o", str(tmp_path / "x.json")])
+    assert result.exit_code != 0
+    assert "management account or a delegated admin" in result.output
+
+
+def test_collect_command_scp_no_organization_gives_friendly_error(runner, monkeypatch, tmp_path):
+    from botocore.exceptions import ClientError
+
+    def fake_collect_organization(*args, **kwargs):
+        raise ClientError(
+            {"Error": {"Code": "AWSOrganizationsNotInUseException", "Message": "not in use"}}, "ListPoliciesForTarget",
+        )
+
+    monkeypatch.setattr("iam_mapper.aws_collector.collect_organization", fake_collect_organization)
+
+    result = runner.invoke(main, ["collect", "--include-scps", "-o", str(tmp_path / "x.json")])
+    assert result.exit_code != 0
+    assert "isn't part of an AWS Organization" in result.output
+
+
 def test_collect_command_errors_without_boto3(runner, monkeypatch, tmp_path):
     real_import = builtins.__import__
 

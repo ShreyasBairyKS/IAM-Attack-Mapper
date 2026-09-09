@@ -11,9 +11,20 @@ modify the account it's pointed at.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
-from .models import Group, Organization, Policy, Role, Statement, TrustStatement, User
+from .models import (
+    Group,
+    Organization,
+    Policy,
+    ResourcePolicy,
+    ResourcePolicyStatement,
+    Role,
+    Statement,
+    TrustStatement,
+    User,
+)
 
 
 # --------------------------------------------------------------------------
@@ -88,6 +99,23 @@ def normalize_trust_document(document: Dict[str, Any]) -> List[TrustStatement]:
     if isinstance(statements, dict):
         statements = [statements]
     return [normalize_trust_statement(s) for s in statements]
+
+
+def normalize_resource_policy_statement(stmt: Dict[str, Any]) -> ResourcePolicyStatement:
+    return ResourcePolicyStatement(
+        effect=stmt["Effect"],
+        principals=normalize_principals(stmt.get("Principal", {})),
+        actions=_as_list(stmt.get("Action")),
+        resources=_as_list(stmt.get("Resource")) or ["*"],
+        condition=stmt.get("Condition") or None,
+    )
+
+
+def normalize_resource_policy_document(document: Dict[str, Any]) -> List[ResourcePolicyStatement]:
+    statements = document.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
+    return [normalize_resource_policy_statement(s) for s in statements]
 
 
 # --------------------------------------------------------------------------
@@ -211,12 +239,84 @@ def _collect_groups(iam, org: Organization, cache: _PolicyCache) -> None:
             ))
 
 
-def collect_organization(session, account_id: Optional[str] = None) -> Organization:
+def _collect_scps(session, account_id: str) -> List[Policy]:
+    """The *effective* set of Service Control Policies for this account:
+    walk the Organization from the account up through every parent OU to
+    the root, collecting each level's attached SCPs (deduped by policy
+    id). Requires ``organizations:ListParents``/``ListPoliciesForTarget``/
+    ``DescribePolicy`` -- typically only available from the management
+    account or a delegated administrator, so this is opt-in (see
+    ``collect_organization(..., include_scps=True)``) rather than always
+    attempted.
+    """
+    orgs = session.client("organizations")
+    seen: Dict[str, Policy] = {}
+
+    target_id = account_id
+    while True:
+        for p in orgs.list_policies_for_target(TargetId=target_id, Filter="SERVICE_CONTROL_POLICY")["Policies"]:
+            if p["Id"] in seen:
+                continue
+            # Content is a JSON string here, unlike IAM's already-decoded documents.
+            content = orgs.describe_policy(PolicyId=p["Id"])["Policy"]["Content"]
+            seen[p["Id"]] = Policy(
+                name=p["Name"],
+                arn=p["Arn"],
+                statements=normalize_policy_document(json.loads(content)),
+                aws_managed=bool(p.get("AwsManaged", False)),
+            )
+
+        parents = orgs.list_parents(ChildId=target_id)["Parents"]
+        if not parents:
+            break
+        target_id = parents[0]["Id"]  # an OU/account has exactly one parent
+
+    return list(seen.values())
+
+
+def _collect_s3_bucket_policies(session) -> List[ResourcePolicy]:
+    """One resource-policy hygiene check: S3 bucket policies. Buckets with
+    no policy (``NoSuchBucketPolicy``) are skipped -- that's the normal
+    case, not an error. Opt-in via ``include_s3_buckets=True`` since it
+    needs ``s3:ListAllMyBuckets``/``s3:GetBucketPolicy`` on top of the
+    base IAM read-only permission set.
+    """
+    s3 = session.client("s3")
+    resource_policies: List[ResourcePolicy] = []
+    for bucket in s3.list_buckets()["Buckets"]:
+        name = bucket["Name"]
+        try:
+            raw = s3.get_bucket_policy(Bucket=name)["Policy"]
+        except s3.exceptions.ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "NoSuchBucketPolicy":
+                continue
+            raise
+
+        resource_policies.append(ResourcePolicy(
+            resource_arn=f"arn:aws:s3:::{name}",
+            resource_type="s3_bucket",
+            statements=normalize_resource_policy_document(json.loads(raw)),
+        ))
+    return resource_policies
+
+
+def collect_organization(
+    session,
+    account_id: Optional[str] = None,
+    include_scps: bool = False,
+    include_s3_buckets: bool = False,
+) -> Organization:
     """Pull the given ``boto3.Session``'s IAM state into an :class:`Organization`.
 
     ``account_id`` defaults to the caller's own account (via
     ``sts:GetCallerIdentity``) -- pass it explicitly if the session's
     credentials belong to a different account than the one being audited.
+
+    ``include_scps``/``include_s3_buckets`` are opt-in: both need
+    permissions beyond the base least-privilege IAM read-only set (see
+    ``data/collect-readonly-policy.json``), and SCP collection in
+    particular typically only works from the Organization's management
+    account or a delegated administrator.
     """
     iam = session.client("iam")
     if account_id is None:
@@ -228,5 +328,10 @@ def collect_organization(session, account_id: Optional[str] = None) -> Organizat
     _collect_users(iam, org, cache)
     _collect_roles(iam, org, cache)
     _collect_groups(iam, org, cache)
+
+    if include_scps:
+        org.scps = _collect_scps(session, account_id)
+    if include_s3_buckets:
+        org.resource_policies = _collect_s3_bucket_policies(session)
 
     return org

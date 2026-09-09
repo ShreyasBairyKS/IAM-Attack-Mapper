@@ -87,6 +87,76 @@ def test_is_admin_false_for_ordinary_access():
     assert not engine.is_admin("u")
 
 
+# --------------------------------------------------------------------------
+# Service Control Policies -- same "can only narrow, never grant" ceiling
+# semantics as a permissions boundary, but applied at the account level.
+# --------------------------------------------------------------------------
+
+
+def test_scp_blocks_action_not_in_its_allow_list():
+    org = _org_with_user([Statement(effect="Allow", actions=["*"], resources=["*"])])
+    org.scps = [Policy(
+        name="DenyIAM", arn="arn:aws:organizations::111111111111:policy/p-1",
+        statements=[Statement(effect="Allow", actions=["s3:*", "ec2:*"], resources=["*"])],
+    )]
+    engine = PolicyEngine(org)
+    assert engine.is_allowed("u", "s3:GetObject").allowed
+    assert not engine.is_allowed("u", "iam:CreateUser").allowed  # not in the SCP's allow list
+
+
+def test_scp_explicit_deny_blocks_even_with_full_allow_list():
+    org = _org_with_user([Statement(effect="Allow", actions=["*"], resources=["*"])])
+    org.scps = [Policy(
+        name="DenyIAM", arn="arn:aws:organizations::111111111111:policy/p-1",
+        statements=[
+            Statement(effect="Allow", actions=["*"], resources=["*"]),
+            Statement(effect="Deny", actions=["iam:*"], resources=["*"]),
+        ],
+    )]
+    engine = PolicyEngine(org)
+    assert engine.is_allowed("u", "s3:GetObject").allowed
+    assert not engine.is_allowed("u", "iam:CreateUser").allowed
+
+
+def test_scp_full_aws_access_does_not_restrict_anything():
+    # The default AWS-managed SCP: Allow */* -- should behave identically
+    # to having no SCPs at all.
+    org = _org_with_user([Statement(effect="Allow", actions=["iam:*"], resources=["*"])])
+    org.scps = [Policy(
+        name="FullAWSAccess", arn="arn:aws:organizations::aws:policy/service_control_policy/p-FullAWSAccess",
+        statements=[Statement(effect="Allow", actions=["*"], resources=["*"])],
+    )]
+    engine = PolicyEngine(org)
+    assert engine.is_admin("u")
+
+
+def test_multiple_scps_intersect_not_union():
+    org = _org_with_user([Statement(effect="Allow", actions=["*"], resources=["*"])])
+    # Root-level SCP allows s3 and iam; account-level SCP allows only s3.
+    # The account only gets what BOTH permit: s3 only.
+    org.scps = [
+        Policy(name="RootSCP", arn="arn:aws:organizations::111111111111:policy/p-root",
+               statements=[Statement(effect="Allow", actions=["s3:*", "iam:*"], resources=["*"])]),
+        Policy(name="AccountSCP", arn="arn:aws:organizations::111111111111:policy/p-acct",
+               statements=[Statement(effect="Allow", actions=["s3:*"], resources=["*"])]),
+    ]
+    engine = PolicyEngine(org)
+    assert engine.is_allowed("u", "s3:GetObject").allowed
+    assert not engine.is_allowed("u", "iam:CreateUser").allowed
+
+
+def test_scp_restricting_iam_prevents_false_admin_positive():
+    # Without the SCP this principal would be admin-equivalent; the SCP
+    # caps the whole account below full IAM control.
+    org = _org_with_user([Statement(effect="Allow", actions=["*"], resources=["*"])])
+    org.scps = [Policy(
+        name="NoIAM", arn="arn:aws:organizations::111111111111:policy/p-1",
+        statements=[Statement(effect="Allow", actions=["s3:*", "ec2:*", "lambda:*"], resources=["*"])],
+    )]
+    engine = PolicyEngine(org)
+    assert not engine.is_admin("u")
+
+
 def test_group_inherited_policy():
     from iam_mapper.models import Group
 

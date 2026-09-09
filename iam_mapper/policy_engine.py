@@ -6,16 +6,20 @@ to answer "can principal X do action Y on resource Z":
 
   1. Default deny.
   2. Any explicit Deny (identity-based) wins, full stop.
-  3. If a permissions boundary is set, it must *also* allow the action
+  3. Every applicable Service Control Policy (SCP) must also allow the
+     action -- like a boundary, an SCP can only narrow what's allowed,
+     never grant anything (see ``Organization.scps``).
+  4. If a permissions boundary is set, it must *also* allow the action
      (a boundary can only take away permissions, never grant them).
-  4. Otherwise, an explicit Allow in an identity-based policy (attached,
+  5. Otherwise, an explicit Allow in an identity-based policy (attached,
      inline, or -- for users -- via group membership) grants it.
 
-Not modeled (see README "Limitations"): resource-based policies (except
-role trust policies, handled separately in ``trust.py``), Service
-Control Policies, session policies, and real evaluation of ``Condition``
-blocks -- a matching statement with a condition is treated as "allows,
-but flagged conditional" rather than resolved.
+Not modeled (see README "Limitations"): resource-based policies other
+than role trust policies and the S3-bucket-policy hygiene check in
+``resource_trust.py`` (no general resource-policy evaluation), session
+policies, and real evaluation of ``Condition`` blocks -- a matching
+statement with a condition is treated as "allows, but flagged
+conditional" rather than resolved.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from __future__ import annotations
 import fnmatch
 import re
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .models import Organization, Policy, Principal, Statement, User
 
@@ -54,6 +58,17 @@ def resource_matches(statement: Statement, resource: str) -> bool:
         # narrowly-scoped statement would otherwise look admin-equivalent.
         return any(r == "*" for r in statement.resources)
     return any(_aws_pattern_to_regex(r).match(resource) for r in statement.resources)
+
+
+def _statement_set_permits(statements: List[Statement], action: str, resource: str) -> Tuple[bool, bool]:
+    """(allows, denies) for one policy's statements against action/resource.
+
+    Shared by permissions-boundary and SCP evaluation, which both apply
+    the same "must also allow, and must not deny" ceiling logic.
+    """
+    allows = any(s.effect == "Allow" and action_matches(s, action) and resource_matches(s, resource) for s in statements)
+    denies = any(s.effect == "Deny" and action_matches(s, action) and resource_matches(s, resource) for s in statements)
+    return allows, denies
 
 
 @dataclass
@@ -108,16 +123,21 @@ class PolicyEngine:
             if s.effect == "Deny" and action_matches(s, action) and resource_matches(s, resource):
                 return EvalResult(False, reason="explicit identity Deny")
 
+        # SCPs never grant anything -- like a permissions boundary, each one
+        # can only narrow what's already allowed. Every applicable SCP (this
+        # is the already-flattened root+OU+account set, see Organization's
+        # docstring) must permit the action, or the account-wide ceiling
+        # blocks it regardless of what the identity policy says.
+        for scp in self.org.scps:
+            scp_allows, scp_denies = _statement_set_permits(scp.statements, action, resource)
+            if scp_denies:
+                return EvalResult(False, reason=f"blocked by SCP {scp.name!r} (explicit Deny)")
+            if not scp_allows:
+                return EvalResult(False, reason=f"blocked by SCP {scp.name!r} (not in its Allow list)")
+
         boundary = self._boundary_statements(principal)
         if boundary is not None:
-            boundary_allows = any(
-                s.effect == "Allow" and action_matches(s, action) and resource_matches(s, resource)
-                for s in boundary
-            )
-            boundary_denies = any(
-                s.effect == "Deny" and action_matches(s, action) and resource_matches(s, resource)
-                for s in boundary
-            )
+            boundary_allows, boundary_denies = _statement_set_permits(boundary, action, resource)
             if boundary_denies or not boundary_allows:
                 return EvalResult(False, reason="permissions boundary does not allow this")
 

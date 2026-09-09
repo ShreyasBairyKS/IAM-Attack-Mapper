@@ -11,7 +11,17 @@ import json
 from dataclasses import asdict
 from typing import Any, Dict
 
-from .models import Group, Organization, Policy, Role, Statement, TrustStatement, User
+from .models import (
+    Group,
+    Organization,
+    Policy,
+    ResourcePolicy,
+    ResourcePolicyStatement,
+    Role,
+    Statement,
+    TrustStatement,
+    User,
+)
 
 
 def _statement_from_dict(d: Dict[str, Any]) -> Statement:
@@ -76,6 +86,24 @@ def _group_from_dict(d: Dict[str, Any]) -> Group:
     )
 
 
+def _resource_policy_statement_from_dict(d: Dict[str, Any]) -> ResourcePolicyStatement:
+    return ResourcePolicyStatement(
+        effect=d["effect"],
+        principals=list(d["principals"]),
+        actions=list(d["actions"]),
+        resources=list(d.get("resources", ["*"])),
+        condition=d.get("condition"),
+    )
+
+
+def _resource_policy_from_dict(d: Dict[str, Any]) -> ResourcePolicy:
+    return ResourcePolicy(
+        resource_arn=d["resource_arn"],
+        resource_type=d["resource_type"],
+        statements=[_resource_policy_statement_from_dict(s) for s in d.get("statements", [])],
+    )
+
+
 def organization_to_dict(org: Organization) -> Dict[str, Any]:
     return {
         "account_id": org.account_id,
@@ -83,6 +111,8 @@ def organization_to_dict(org: Organization) -> Dict[str, Any]:
         "roles": [asdict(r) for r in org.roles.values()],
         "groups": [asdict(g) for g in org.groups.values()],
         "policies": [asdict(p) for p in org.policies.values()],
+        "scps": [asdict(p) for p in org.scps],
+        "resource_policies": [asdict(rp) for rp in org.resource_policies],
     }
 
 
@@ -96,6 +126,8 @@ def organization_from_dict(d: Dict[str, Any]) -> Organization:
         org.add_role(_role_from_dict(r))
     for g in d.get("groups", []):
         org.add_group(_group_from_dict(g))
+    org.scps = [_policy_from_dict(p) for p in d.get("scps", [])]
+    org.resource_policies = [_resource_policy_from_dict(rp) for rp in d.get("resource_policies", [])]
     return org
 
 

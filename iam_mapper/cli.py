@@ -40,11 +40,16 @@ def generate_sample(output: str):
 @click.option("--profile", default=None, help="AWS named profile to use (see `aws configure list-profiles`).")
 @click.option("--region", default=None, help="AWS region for the STS/IAM clients (IAM itself is a global service).")
 @click.option("--account-id", default=None, help="Override the account id (default: the caller's own, via STS).")
+@click.option("--include-scps", is_flag=True,
+              help="Also collect Service Control Policies (needs organizations:List*/Describe*; usually only works from the management account or a delegated admin).")
+@click.option("--include-s3-buckets", is_flag=True,
+              help="Also collect S3 bucket policies, for the external-trust hygiene check (needs s3:ListAllMyBuckets/GetBucketPolicy).")
 @click.option("-o", "--output", default="org.json", show_default=True, help="Where to write the collected account JSON.")
-def collect(profile: str, region: str, account_id: str, output: str):
+def collect(profile: str, region: str, account_id: str, include_scps: bool, include_s3_buckets: bool, output: str):
     """Pull live IAM state from a real AWS account (read-only; requires the `aws` extra)."""
     try:
         import boto3
+        from botocore.exceptions import ClientError
     except ImportError as e:
         raise click.ClickException(
             "boto3 is required for this command: pip install iam-attack-mapper[aws]"
@@ -53,7 +58,20 @@ def collect(profile: str, region: str, account_id: str, output: str):
     from .aws_collector import collect_organization
 
     session = boto3.Session(profile_name=profile, region_name=region)
-    org = collect_organization(session, account_id=account_id)
+    try:
+        org = collect_organization(
+            session, account_id=account_id,
+            include_scps=include_scps, include_s3_buckets=include_s3_buckets,
+        )
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        hint = ""
+        if code in ("AccessDeniedException", "AccessDenied"):
+            hint = " (missing permissions -- see data/collect-readonly-policy.json; --include-scps needs the management account or a delegated admin)"
+        elif code == "AWSOrganizationsNotInUseException":
+            hint = " (this account isn't part of an AWS Organization -- omit --include-scps)"
+        raise click.ClickException(f"{e}{hint}") from e
+
     save_organization(org, output)
     click.echo(f"Collected live account ({len(org.all_principals())} principals) to {output}")
 

@@ -59,10 +59,12 @@ account JSON, or a live AWS account via aws_collector.py (boto3)
         |
         v
   policy_engine.py     <- "is action X on resource Y allowed for principal P?"
+                           (also intersects Service Control Policies, if any)
         |
         v
   escalation_rules.py  <- ~12 known privesc techniques, each emits graph edges
-  trust.py             <- direct sts:AssumeRole edges + cross-account trust findings
+  trust.py             <- direct sts:AssumeRole edges + cross-account role-trust findings
+  resource_trust.py    <- same hygiene check, for resource policies (S3 bucket policies)
         |
         v
   graph_builder.py      <- networkx.MultiDiGraph: nodes = principals, edges = "can become"
@@ -107,6 +109,11 @@ techniques — see [Roadmap](#roadmap) for what's next.
 - A principal that already has `"*"/"*"` (or `iam:*`, since full IAM
   control always leads back to `"*"/"*"`) is reported once as
   `already_admin`, not re-derived as a 1-hop "path".
+- Service Control Policies (`Organization.scps`), if present, are
+  intersected into every `is_allowed()`/`is_admin()` check the same way a
+  permissions boundary is — an SCP can only narrow what's allowed, never
+  grant anything, so a restrictive SCP correctly suppresses findings an
+  identity policy alone would suggest.
 
 ## Installation
 
@@ -157,6 +164,10 @@ iam-mapper diff baseline.json current.json --fail-on-regression
 # each run's upload reflects genuinely new alerts, not the whole backlog:
 iam-mapper analyze -i data/sample_org.json --format sarif > results.sarif
 iam-mapper diff baseline.json current.json --format sarif > results.sarif
+
+# Also pull Service Control Policies and S3 bucket policies (both opt-in --
+# see "Collecting from a live account" for the extra permissions each needs):
+iam-mapper collect --profile my-aws-profile --include-scps --include-s3-buckets -o live_org.json
 ```
 
 ### Collecting from a live account
@@ -175,6 +186,26 @@ iam-mapper collect --profile my-aws-profile --region us-east-1 -o live_org.json
 `--account-id` overrides the account id if your credentials belong to a
 different account than the one being audited; `--profile`/`--region`
 are passed straight through to `boto3.Session`.
+
+Two more collectors are opt-in, since both need permissions beyond the
+base read-only set:
+
+- **`--include-scps`** — walks the AWS Organization from this account up
+  through every parent OU to the root (`organizations:ListParents` /
+  `ListPoliciesForTarget` / `DescribePolicy`), collecting the effective
+  set of Service Control Policies. This typically only works from the
+  Organization's management account or a delegated administrator; run
+  without it if the account isn't part of an Organization, or if your
+  credentials can't reach the Organizations API.
+- **`--include-s3-buckets`** — fetches each bucket's policy
+  (`s3:ListAllMyBuckets` / `GetBucketPolicy`) and flags any that trust an
+  external AWS account or `"*"` (the same hygiene check role trust
+  policies already get). Buckets with no policy are silently skipped —
+  that's the normal case, not an error.
+
+Both failure modes surface as a clear error message (missing
+permissions, or the account isn't in an Organization) rather than a raw
+boto3 traceback.
 
 A least-privilege IAM policy for the credentials running `collect` is
 provided at [`data/collect-readonly-policy.json`](data/collect-readonly-policy.json)
@@ -220,9 +251,20 @@ techniques right, not on covering every corner of IAM evaluation:
 - **IAM `Condition` blocks are not evaluated** — a matching statement
   with a condition is treated as "would allow" and flagged
   `conditional`, downgrading severity by one level, rather than
-  resolving condition operators (`StringEquals`, `IpAddress`, etc).
-- **No Service Control Policies (SCPs), resource-based policies (other
-  than role trust policies), or session policies.**
+  resolving condition operators (`StringEquals`, `IpAddress`, etc). This
+  applies to SCP and resource-policy statements too, not just identity ones.
+- **Service Control Policies model a flattened, already-effective set,
+  not the OU hierarchy itself** — `Organization.scps` is expected to be
+  the result of walking root → OU → account (which `iam-mapper collect
+  --include-scps` does for you); the model has no notion of OUs as
+  first-class objects.
+- **Resource-based policies are a hygiene check, not a reachability
+  model** — only S3 bucket policies are collected so far (KMS key
+  policies and others are future work, see Roadmap), and a flagged
+  bucket isn't wired into the escalation graph as an edge, since what an
+  external principal could actually *do* with that access depends on
+  data this tool doesn't have (is it public data? CI artifacts?
+  Terraform state?).
 - **`NotResource` is not supported** (only `Resource`/`NotAction`/`Action`).
 - Wildcard matching follows IAM's `*`/`?` semantics but doesn't model
   every edge case of ARN structure.
@@ -233,14 +275,22 @@ techniques right, not on covering every corner of IAM evaluation:
       into the same `Organization` model (`iam-mapper collect`).
 - [x] Continuous scanning + diffing (`iam-mapper diff`): "this deploy
       opened a new escalation path."
+- [x] SCP-aware evaluation (`Organization.scps`, `--include-scps`) --
+      Service Control Policies are intersected into every permission
+      check, the same "can only narrow" ceiling a permissions boundary
+      already got.
+- [x] S3 bucket-policy hygiene check (`--include-s3-buckets`) -- the
+      most common real-world resource-based-policy finding class.
+- [ ] More resource-based policies: KMS key policies, Lambda resource
+      policies, and wiring flagged resources into the reachability graph
+      itself (not just a hygiene finding) once there's a model for what
+      a resource actually exposes.
 - [ ] Cross-account collection via `sts:AssumeRole`, for auditing an
       entire AWS Organization from one central role.
 - [ ] Web UI: interactive graph visualization (the exported GraphML/JSON
       is already shaped for this).
-- [ ] More escalation techniques (S3 bucket policy backdoors,
-      `iam:CreateServiceLinkedRole` abuse, SSM `SendCommand` against an
-      existing instance's role, etc).
-- [ ] SCP-aware evaluation for multi-account AWS Organizations.
+- [ ] More escalation techniques (`iam:CreateServiceLinkedRole` abuse,
+      SSM `SendCommand` against an existing instance's role, etc).
 - [ ] Multi-cloud: the same graph-reachability model applied to GCP IAM
       and Azure RBAC.
 
